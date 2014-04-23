@@ -8,7 +8,7 @@ module.exports = (options = {}) ->
 
 	# force these two optons
 	options.convertObjectIDs = false
-	options.format = 'normal'
+	options.format = 'raw'
 
 	# ensure this works 
 	options.heartbeat = Number(options.heartbeat) or 0
@@ -49,17 +49,29 @@ module.exports = (options = {}) ->
 
 			# post all events to the redis list in a normalised format
 			watcher.watch 'all', (event) ->
-				ns = event.namespace
-				event.timestamp = event.timestamp.getTime()
-				for op in event.oplist
-					do (op) ->
-						ev = {}
-						ev[key] = val for key, val of event when key not in ['oplist', 'operationId']
-						ev[key] = val for key, val of op
+				# this special unset allows bypassing these events. nice and simple.
+				if event.o?.$unset?.mtranNoop?
+					return watcher.debug 'Skip event due to mtranNoop'
 
-						type = Object::toString.call(ev.id).slice(8, -1)
-						type = (if type is 'Object' then ev.id.constructor.name else type)
-						ev.id = [type, ev.id].map String
+				if event.o2?
+					id = event.o2._id
+				else
+					id = event.o._id
+					delete event.o._id
 
-						client.lpush ('mtran:events:' + ns), JSON.stringify(ev), ->
-							watcher.debug 'OpLog > Redis latency: ' + (new Date - ev.timestamp) + 'ms'
+				type = Object::toString.call(id).slice(8, -1)
+				type = (if type is 'Object' then id.constructor.name else type)
+
+				opmap =
+					i: 'insert'
+					u: 'update'
+					d: 'remove'
+
+				ev =
+					id: [type, id].map String
+					timestamp: event.ts.high_ * 1000
+					operation: opmap[event.op]
+					data: event.o
+
+				client.lpush ('mtran:events:' + event.ns), JSON.stringify(ev), ->
+					watcher.debug 'OpLog > Redis latency: ' + (new Date - ev.timestamp) + 'ms'

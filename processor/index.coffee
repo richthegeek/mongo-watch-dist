@@ -11,7 +11,13 @@ module.exports = class Processor
 	@RUNNING: 2
 
 	constructor: (@collection, @options, @callback) ->
-		@queue = 'mtran:events:' + [@collection.db.databaseName, @collection.collectionName].join '.'
+		@options.ops = [].concat(@options.ops or []).map(String)
+		@options.paths = [].concat(@options.paths or []).map(String)
+		@options.query or= (q) -> q
+		@options.process or= -> true
+		@options.onProcessed or= -> null
+
+		@queue = 'mtran:events:' + [@collection.db.databaseName, @collection.collectionName].join('.')
 		@redis = redis.createClient()
 		@loop()
 		@resume()
@@ -35,45 +41,65 @@ module.exports = class Processor
 		if @state is Processor.STOPPED
 			return null
 
-		@redis.brpop @queue, 0, (err, resp) =>
+		@redis.brpoplpush @queue, @queue.replace(':events:', ':processing:'), 0, (err, data) =>
 			if err
 				return @loop err
 
-			if not resp
+			if not data
 				return setTimeout @loop.bind(@), 100
 
-			[queue, data] = resp
+			times = {}
+			startTime = new Date
 
 			try
 				item = JSON.parse data
 			catch err
 				return @loop err
 
-			if not @options[item.operation]
+			if item.operation not in @options.ops
 				return @loop()
 
-			paths = makePaths item.data, item.path
-			allowed = [].concat @options.paths or []
-			if allowed.length > 0
-				if not paths.some((path) -> path in allowed)
-					return @loop()
-		
+			item.paths = makePaths item.data, item.path
+			if @options.paths.length > 0 and not item.paths.some((path) => path in @options.paths)
+				return @loop()
+
+			if not @options.process item
+				return @loop()
+
 			[type, id] = item.id
 			if type is 'ObjectID'
 				id = Mongo.ObjectID.createFromHexString id
 			else if global[type]
 				id = new global[type] id
 
-			query = @options.query or {}
-			query._id = id
-
+			query = @options.query {_id: id}, item
+			times.loadEvent = new Date
 			@collection.findOne query, (err, input) =>
 				if err
 					return @loop err
 				if not input
 					return @loop()
 
-				@callback input, (err, output) =>
-					end = +new Date
-					console.log 'Latency:', end - item.timestamp + 'ms'
+				extra =
+					event: item
+					query: query
+					noop: (data) ->
+						data.$unset ?= {}
+						data.$unset.mtranNoop = 1
+						return data
+
+				times.loadRow = new Date
+				@callback input, extra, (err, output) =>
+					times.complete = +new Date
+					for key, val of times
+						times[key] = val - startTime
+					times.full = new Date - item.timestamp
+
+					@options.onProcessed {
+						input: input,
+						output: output,
+						event: item,
+						query: query,
+						times: times
+					}
 					@loop err
