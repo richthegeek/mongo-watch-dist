@@ -17,6 +17,9 @@ module.exports = class Processor
 		@options.process or= -> true
 		@options.onProcessed or= -> null
 
+		if 'all' in @options.ops
+			@options.ops.push 'insert', 'update', 'remove'
+
 		@queue = 'mtran:events:' + [@collection.db.databaseName, @collection.collectionName].join('.')
 		@redis = redis.createClient()
 		@loop()
@@ -57,27 +60,40 @@ module.exports = class Processor
 				return @loop err
 
 			if item.operation not in @options.ops
+				console.log 'Ignored op'
 				return @loop()
 
 			item.paths = makePaths item.data, item.path
 			if @options.paths.length > 0 and not item.paths.some((path) => path in @options.paths)
+				console.log 'Ignored path'
 				return @loop()
 
 			if not @options.process item
+				console.log 'Not processed'
 				return @loop()
 
 			[type, id] = item.id
-			if type is 'ObjectID'
-				id = Mongo.ObjectID.createFromHexString id
+			fns =
+				'ObjectID': Mongo.ObjectID.createFromHexString
+				'String': (id) -> id.toString()
+				'Number': (id) -> Number(id).valueOf()
+			if fns[type]
+				id = fns[type] id
 			else if global[type]
 				id = new global[type] id
 
 			query = @options.query {_id: id}, item
 			times.loadEvent = new Date
-			@collection.findOne query, (err, input) =>
+
+			getRow = @collection.findOne.bind @collection
+			if item.operation is 'remove'
+				getRow = (query, next) -> next null, {_id: query._id}
+			
+			getRow query, (err, input) =>
 				if err
 					return @loop err
 				if not input
+					console.log 'Not found'
 					return @loop()
 
 				extra =
