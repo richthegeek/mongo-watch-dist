@@ -2,25 +2,27 @@ Mongo = require 'mongodb'
 MongoWatch = require 'mongo-watch'
 redis = require 'redis'
 
-makePaths = require './_makePaths'
-
 module.exports = class Processor
 
 	@STOPPED: 0
 	@PAUSED: 1
 	@RUNNING: 2
 
-	constructor: (@collection, @options, @callback) ->
-		@options.ops = [].concat(@options.ops or []).map(String)
-		@options.paths = [].concat(@options.paths or []).map(String)
+	constructor: (@collection) ->
+		args = Array::slice.call(arguments, 1).filter(Boolean).reduce ((o, arg) ->
+			o[typeof arg] = arg
+			return o
+		), {}
+
+		@callback = args.function
+		@name = args.string or args.number or 'all'
+		@options = args.object or {}
+
 		@options.query or= (q) -> q
 		@options.process or= -> true
 		@options.onProcessed or= -> null
 
-		if 'all' in @options.ops
-			@options.ops.push 'insert', 'update', 'remove'
-
-		@queue = 'mtran:events:' + [@collection.db.databaseName, @collection.collectionName].join('.')
+		@queue = 'mtran:events:' + [@collection.db.databaseName, @collection.collectionName].join('.') + ':' + @name
 		@redis = redis.createClient()
 		@loop()
 		@resume()
@@ -59,24 +61,15 @@ module.exports = class Processor
 			catch err
 				return @loop err
 
-			if item.operation not in @options.ops
-				console.log 'Ignored op'
-				return @loop()
-
-			item.paths = makePaths item.data, item.path
-			if @options.paths.length > 0 and not item.paths.some((path) => path in @options.paths)
-				console.log 'Ignored path'
-				return @loop()
-
 			if not @options.process item
-				console.log 'Not processed'
 				return @loop()
 
 			[type, id] = item.id
 			fns =
-				'ObjectID': Mongo.ObjectID.createFromHexString
-				'String': (id) -> id.toString()
-				'Number': (id) -> Number(id).valueOf()
+				ObjectID: Mongo.ObjectID.createFromHexString
+				String: (id) -> id.toString()
+				Number: (id) -> Number(id).valueOf()
+
 			if fns[type]
 				id = fns[type] id
 			else if global[type]

@@ -5,10 +5,6 @@ mtran.attach mongo
 
 mongo.MongoClient.connect 'mongodb://127.0.0.1:27017/mtran', (err, db) ->
 
-	coll = db.collection 'numbers'
-
-	# coll.watch 'doubler'
-
 	# mtran.ensureWatcher {}
 	db.ensureWatcher {onDebug: console.log}
 
