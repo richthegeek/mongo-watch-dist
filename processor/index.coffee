@@ -79,7 +79,7 @@ module.exports = class Processor
 			times.loadEvent = new Date
 
 			getRow = @collection.findOne.bind @collection
-			if item.operation is 'remove'
+			if item.operation is 'remove' or @options.load is false
 				getRow = (query, next) -> next null, {_id: query._id}
 			
 			getRow query, (err, input) =>
@@ -111,4 +111,7 @@ module.exports = class Processor
 						query: query,
 						times: times
 					}
+					
+					@redis.lrem @queue.replace(':events:', ':processing:'), 0, data, -> null
+
 					@loop err

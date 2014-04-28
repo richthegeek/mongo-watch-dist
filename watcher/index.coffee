@@ -1,5 +1,5 @@
 
-module.exports = (options = {}) ->
+module.exports = (options = {}, callback) ->
 	redis = require 'redis'
 	makePaths = require './_makePaths'
 	
@@ -17,15 +17,20 @@ module.exports = (options = {}) ->
 	options.heartbeat = Number(options.heartbeat) or 0
 	options.heartbeat = Math.min 100, options.heartbeat
 
+	fireCallback = (err, watcher) ->
+		callback err, watcher
+		callback = -> null
+
 	do ensureWatcher = ->
 		# set the key if it doesnt exist. If that works, start watching and begin the check-cycle
 		# the time has a min value on it because redis seems to have slight delays on expiries and such.
 		client.set ['mtran:watcher', process.pid, 'PX', Math.max(options.heartbeat, 500), 'NX'], (err, set) ->
 			if err
 				# todo: in an ideal world this would not throw
-				throw err
+				return fireCallback(err)
 			if not set
 				# if we couldnt set it, loop back round to try again in a while
+				fireCallback(null, true)
 				return setTimeout ensureWatcher, options.hearbeat
 			watch()
 	
@@ -55,6 +60,7 @@ module.exports = (options = {}) ->
 		MongoWatch = require '/home/richard/www/git/mongo-watch'
 		watcher = new MongoWatch options
 		watcher.debug 'Promoting to watcher'
+		fireCallback null, true
 
 		demote = ->
 			watcher.debug 'Demoting from watcher'

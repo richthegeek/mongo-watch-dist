@@ -1,5 +1,3 @@
-Mongo = require 'mongodb'
-
 getRedisClient = ->
 	if @client?
 		return @client
@@ -7,7 +5,7 @@ getRedisClient = ->
 	redis = require 'redis'
 	@client = redis.createClient()
 
-Mongo.Collection::watch = (name, options) ->
+module.exports.watch = (name, options) ->
 	if name.toString() is '[object Object]'
 		options = name
 		name = null
@@ -36,7 +34,7 @@ Mongo.Collection::watch = (name, options) ->
 
 	return @
 
-Mongo.Collection::unwatch = (name) ->
+module.exports.unwatch = (name) ->
 	# remove watch config from redis and notify of config change
 	key = [@db.databaseName, @collectionName, name].join '.'
 	client = @getRedisClient()
