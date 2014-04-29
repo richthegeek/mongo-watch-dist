@@ -75,7 +75,12 @@ module.exports = class Processor
 			else if global[type]
 				id = new global[type] id
 
-			query = @options.query {_id: id}, item
+			if 'function' is typeof @options.query
+				query = @options.query {_id: id}, item
+			else
+				@options.load = true
+				query = @options.query
+				query._id = id
 			times.loadEvent = new Date
 
 			getRow = @collection.findOne.bind @collection
@@ -86,7 +91,6 @@ module.exports = class Processor
 				if err
 					return @loop err
 				if not input
-					console.log 'Not found'
 					return @loop()
 
 				extra =
